@@ -53,6 +53,8 @@ Other useful environment variables / keys (also available in the config):
 
 ## Running
 
+### Linux/macOS
+
 Make the script executable and run it directly:
 
 ```bash
@@ -60,22 +62,65 @@ chmod +x main.py
 ./main.py
 ```
 
-Or run via the provided shell wrapper (if present):
+Or run via the provided shell wrapper:
 
 ```bash
 bash yandere.sh
 ```
 
-To test ratings behavior quickly, edit `configuration.conf` and toggle `safe/questionable/explicit`, or run with an env override:
+### Windows
+
+Run via the provided batch or PowerShell wrapper:
+
+```cmd
+yandere.bat
+```
+
+Or with PowerShell (requires execution policy adjustment):
+
+```powershell
+.\yandere.ps1
+```
+
+Or run Python directly:
+
+```cmd
+python main.py
+```
+
+### Testing & Configuration
+
+To test ratings behavior quickly on any platform, edit `configuration.conf` and toggle `safe/questionable/explicit`, or run with an env override:
 
 ```bash
+# Linux/macOS
 YANDERE_RATINGS="safe" ./main.py   # single-image (safe only)
 YANDERE_RATINGS="questionable,explicit" ./main.py  # collage
 ```
 
+```cmd
+REM Windows
+set YANDERE_RATINGS=safe
+python main.py
+```
+
 ## Troubleshooting
+
+### Linux/macOS
 - If wallpapers are not applying, make sure a supported setter is available (`gsettings`, `feh`, `swaymsg`, `xfconf-query`, or `nitrogen`).
 - If collage mode fails, install Pillow.
+
+### Windows
+- Wallpaper setting requires Windows API access via Python's `ctypes` module (standard library, no install needed).
+- If wallpaper doesn't apply, try running with administrator privileges.
+- The script attempts multiple methods (Registry, API, PowerShell) to set the wallpaper. Check the logs if none succeed.
+- Ensure Python 3.8+ is installed and available in PATH.
+- If collage mode fails, install Pillow: `pip install Pillow`
+
+### Cross-platform
+- Check that image files are valid (readable, correct format).
+- Ensure download folder has sufficient disk space.
+- For display server issues on Linux, verify your desktop environment supports one of the available setters.
 
 ## Contributing
 Patches welcome. Keep changes focused and run the script locally to validate behavior.
@@ -88,7 +133,8 @@ Personal / repository default — add a license file if you want to publish.
 	- path set by `YANDERE_CONFIG` env var
 	- current working directory
 	- the script directory
-	- `~/.config/configuration.conf`
+	- `~/.config/configuration.conf` (Linux/macOS only)
+	- `%APPDATA%/configuration.conf` (Windows only, via XDG_CONFIG_HOME equivalent)
 
 **Ratings Behavior (safe/questionable/explicit)**
 - Configure ratings via `configuration.conf` entries or `YANDERE_RATINGS` env var.

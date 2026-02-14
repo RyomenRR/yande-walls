@@ -15,10 +15,23 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+# Platform detection
+IS_WINDOWS = sys.platform == "win32"
+
 try:
     import fcntl
 except Exception:
     fcntl = None
+
+try:
+    import ctypes
+except Exception:
+    ctypes = None
+
+try:
+    import winreg
+except Exception:
+    winreg = None
 
 try:
     from PIL import Image, ImageOps
@@ -251,6 +264,12 @@ def output(cmd):
 
 def set_wallpaper(image: Path) -> bool:
     image_str = str(image)
+    
+    # Windows implementation
+    if IS_WINDOWS:
+        return set_wallpaper_windows(image)
+    
+    # Unix/Linux implementations
     uri = f"file://{image_str}"
 
     if shutil.which("gsettings"):
@@ -280,6 +299,58 @@ def set_wallpaper(image: Path) -> bool:
     return False
 
 
+def set_wallpaper_windows(image: Path) -> bool:
+    """Set wallpaper on Windows using ctypes"""
+    if ctypes is None:
+        log("ctypes not available, cannot set wallpaper on Windows")
+        return False
+    
+    try:
+        image_path = str(image.resolve())
+        
+        # Try method 1: Using Windows Registry (more reliable, requires admin on some systems)
+        if winreg is not None:
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Control Panel\Desktop") as key:
+                    winreg.SetValueEx(key, "Wallpaper", 0, winreg.REG_SZ, image_path)
+                
+                # Notify system of change
+                ctypes.windll.user32.SystemParametersInfoW(20, 0, image_path, 3)
+                return True
+            except Exception as e:
+                log(f"Registry method failed: {e}")
+        
+        # Try method 2: Direct API call
+        try:
+            result = ctypes.windll.user32.SystemParametersInfoW(20, 0, image_path, 3)
+            if result:
+                return True
+        except Exception as e:
+            log(f"Direct API method failed: {e}")
+        
+        # Try method 3: PowerShell command
+        try:
+            ps_cmd = (
+                f'Add-Type @" '
+                f'using System; '
+                f'using System.Runtime.InteropServices; '
+                f'public class Wallpaper {{ '
+                f'[DllImport(\\"user32.dll\\")] public static extern bool SystemParametersInfo(uint uAction, uint uParam, string lpvParam, uint fuWinIni); '
+                f'}} '
+                f'"@; '
+                f'[Wallpaper]::SystemParametersInfo(20, 0, \\"{image_path}\\", 3)'
+            )
+            subprocess.run(["powershell", "-Command", ps_cmd], check=False, capture_output=True)
+            return True
+        except Exception as e:
+            log(f"PowerShell method failed: {e}")
+        
+        return False
+    except Exception as e:
+        log(f"Failed to set wallpaper on Windows: {e}")
+        return False
+
+
 def remaining_time(deadline: float) -> float:
     return deadline - time.monotonic()
 
@@ -293,23 +364,38 @@ def timeout_for(deadline: float, cap: float) -> float:
 
 @contextmanager
 def single_instance_lock():
-    if fcntl is None:
-        yield
-        return
-
+    """Cross-platform single instance lock"""
+    
     def is_alive(pid: int) -> bool:
         try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
+            if IS_WINDOWS:
+                import subprocess
+                subprocess.check_output(["tasklist", "/FI", f"PID eq {pid}"], stderr=subprocess.DEVNULL)
+                return True
+            else:
+                os.kill(pid, 0)
+                return True
+        except (OSError, subprocess.CalledProcessError):
             return False
 
     def looks_like_our_process(pid: int) -> bool:
-        try:
-            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", errors="ignore")
-        except Exception:
-            return False
-        return ("main.py" in cmdline) or ("yandere.sh" in cmdline)
+        """Check if a process is one of our wallpaper scripts"""
+        if IS_WINDOWS:
+            try:
+                output_str = subprocess.check_output(
+                    ["tasklist", "/FI", f"PID eq {pid}", "/V"],
+                    stderr=subprocess.DEVNULL,
+                    text=True
+                )
+                return "python" in output_str.lower() or "main.py" in output_str
+            except Exception:
+                return False
+        else:
+            try:
+                cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", errors="ignore")
+            except Exception:
+                return False
+            return ("main.py" in cmdline) or ("yandere.sh" in cmdline)
 
     def terminate_existing(pid: int) -> None:
         if pid <= 1 or pid == os.getpid():
@@ -318,7 +404,11 @@ def single_instance_lock():
             return
 
         try:
-            os.kill(pid, signal.SIGTERM)
+            if IS_WINDOWS:
+                import subprocess
+                subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
+            else:
+                os.kill(pid, signal.SIGTERM)
         except Exception:
             return
 
@@ -328,59 +418,100 @@ def single_instance_lock():
                 return
             time.sleep(0.05)
 
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except Exception:
-            return
         # After killing an existing run, remove any leftover partial files
         try:
             cleanup_partial_files()
         except Exception:
             pass
 
-    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    lock_fp = open(LOCK_FILE, "a+", encoding="utf-8")
-    try:
-        fcntl.flock(lock_fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        lock_fp.seek(0)
-        existing_pid_raw = lock_fp.read().strip()
+    # Platform-specific locking implementation
+    if IS_WINDOWS:
+        # Windows: use simple file-based locking
+        LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        lock_fp = open(LOCK_FILE, "a+", encoding="utf-8")
+        
         try:
-            existing_pid = int(existing_pid_raw)
-        except Exception:
-            existing_pid = -1
-
-        terminate_existing(existing_pid)
-
-        acquired = False
-        end = time.monotonic() + 2.0
-        while time.monotonic() < end:
+            # Read existing PID
+            lock_fp.seek(0)
+            existing_pid_raw = lock_fp.read().strip()
             try:
-                fcntl.flock(lock_fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                acquired = True
-                break
-            except BlockingIOError:
-                time.sleep(0.05)
-        if not acquired:
+                existing_pid = int(existing_pid_raw)
+            except Exception:
+                existing_pid = -1
+            
+            # Try to terminate existing process
+            if existing_pid > 0:
+                terminate_existing(existing_pid)
+            
+            # Write our PID
+            lock_fp.seek(0)
+            lock_fp.truncate()
+            lock_fp.write(str(os.getpid()))
+            lock_fp.flush()
+            
+            # Clean up any lingering partial downloads
+            try:
+                cleanup_partial_files()
+            except Exception:
+                pass
+            
+            yield
+        finally:
+            try:
+                lock_fp.close()
+            except Exception:
+                pass
+    
+    elif fcntl is not None:
+        # Unix: use fcntl file locking
+        LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        lock_fp = open(LOCK_FILE, "a+", encoding="utf-8")
+        
+        try:
+            fcntl.flock(lock_fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            lock_fp.seek(0)
+            existing_pid_raw = lock_fp.read().strip()
+            try:
+                existing_pid = int(existing_pid_raw)
+            except Exception:
+                existing_pid = -1
+
+            terminate_existing(existing_pid)
+
+            acquired = False
+            end = time.monotonic() + 2.0
+            while time.monotonic() < end:
+                try:
+                    fcntl.flock(lock_fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                    break
+                except BlockingIOError:
+                    time.sleep(0.05)
+            if not acquired:
+                lock_fp.close()
+                raise RuntimeError("could not preempt existing run")
+        
+        try:
+            lock_fp.seek(0)
+            lock_fp.truncate()
+            lock_fp.write(str(os.getpid()))
+            lock_fp.flush()
+            # Clean up any lingering partial downloads from previous runs
+            try:
+                cleanup_partial_files()
+            except Exception:
+                pass
+            yield
+        finally:
+            try:
+                fcntl.flock(lock_fp.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
             lock_fp.close()
-            raise RuntimeError("could not preempt existing run")
-    try:
-        lock_fp.seek(0)
-        lock_fp.truncate()
-        lock_fp.write(str(os.getpid()))
-        lock_fp.flush()
-        # Clean up any lingering partial downloads from previous runs
-        try:
-            cleanup_partial_files()
-        except Exception:
-            pass
+    else:
+        # No locking available, just yield
         yield
-    finally:
-        try:
-            fcntl.flock(lock_fp.fileno(), fcntl.LOCK_UN)
-        except Exception:
-            pass
-        lock_fp.close()
 
 
 def fetch_json(url: str, deadline: float):
