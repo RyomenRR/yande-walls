@@ -92,9 +92,9 @@ RATING_TAGS_MAP = {
 # The loader will look in several locations (env override, cwd, script dir, home .config).
 CONFIG_ENV_PATH = os.environ.get("YANDERE_CONFIG")
 CONFIG_CANDIDATES = [
-    Path(os.getcwd()) / "yandere-wallpaper.conf",
-    Path(__file__).resolve().parent / "yandere-wallpaper.conf",
-    Path.home() / ".config" / "yandere-wallpaper.conf",
+    Path(os.getcwd()) / "configuration.conf",
+    Path(__file__).resolve().parent / "configuration.conf",
+    Path.home() / ".config" / "configuration.conf",
 ]
 if CONFIG_ENV_PATH:
     try:
@@ -309,7 +309,7 @@ def single_instance_lock():
             cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8", errors="ignore")
         except Exception:
             return False
-        return ("yandere_wallpaper.py" in cmdline) or ("yandere-wallpaper.sh" in cmdline)
+        return ("main.py" in cmdline) or ("yandere.sh" in cmdline)
 
     def terminate_existing(pid: int) -> None:
         if pid <= 1 or pid == os.getpid():

@@ -19,12 +19,12 @@ pip install Pillow
 ```
 
 ## Files
-- `yandere_wallpaper.py` — main script.
-- `yandere-wallpaper.conf` — optional configuration file (shell-style KEY=VALUE pairs).
+- `main.py` — main script.
+- `configuration.conf` — optional configuration file (shell-style KEY=VALUE pairs).
 
 ## Configuration
 
-Edit `yandere-wallpaper.conf` (or export env variables) to change behavior. Example entries added by default:
+Edit `configuration.conf` (or export env variables) to change behavior. Example entries added by default:
 
 ```properties
 safe=0
@@ -44,7 +44,7 @@ Behavior: if the configuration results in exactly one selected rating the script
 Other useful environment variables / keys (also available in the config):
 - `COLLAGE_MODE` — enable collage mode (1/0) if no ratings override.
 - `STOCK_TARGET` — how many portrait images to keep in the stock cache.
-- `DOWNLOAD_THREADS`, `RUN_TIMEOUT`, etc. — see `yandere-wallpaper.conf` for defaults.
+- `DOWNLOAD_THREADS`, `RUN_TIMEOUT`, etc. — see `configuration.conf` for defaults.
 
 ## How it handles files
 - Downloads are saved first as `.part` files. If a run is interrupted these `.part` files are removed when the next run starts (or when a running process is preempted).
@@ -56,21 +56,21 @@ Other useful environment variables / keys (also available in the config):
 Make the script executable and run it directly:
 
 ```bash
-chmod +x yandere_wallpaper.py
-./yandere_wallpaper.py
+chmod +x main.py
+./main.py
 ```
 
 Or run via the provided shell wrapper (if present):
 
 ```bash
-bash yandere-wallpaper.sh
+bash yandere.sh
 ```
 
-To test ratings behavior quickly, edit `yandere-wallpaper.conf` and toggle `safe/questionable/explicit`, or run with an env override:
+To test ratings behavior quickly, edit `configuration.conf` and toggle `safe/questionable/explicit`, or run with an env override:
 
 ```bash
-YANDERE_RATINGS="safe" ./yandere_wallpaper.py   # single-image (safe only)
-YANDERE_RATINGS="questionable,explicit" ./yandere_wallpaper.py  # collage
+YANDERE_RATINGS="safe" ./main.py   # single-image (safe only)
+YANDERE_RATINGS="questionable,explicit" ./main.py  # collage
 ```
 
 ## Troubleshooting
@@ -84,14 +84,14 @@ Patches welcome. Keep changes focused and run the script locally to validate beh
 Personal / repository default — add a license file if you want to publish.
 
 **Configuration Locations**
-- The script looks for `yandere-wallpaper.conf` in these places (in order):
+- The script looks for `configuration.conf` in these places (in order):
 	- path set by `YANDERE_CONFIG` env var
 	- current working directory
 	- the script directory
-	- `~/.config/yandere-wallpaper.conf`
+	- `~/.config/configuration.conf`
 
 **Ratings Behavior (safe/questionable/explicit)**
-- Configure ratings via `yandere-wallpaper.conf` entries or `YANDERE_RATINGS` env var.
+- Configure ratings via `configuration.conf` entries or `YANDERE_RATINGS` env var.
 - Example config lines:
 
 ```properties
