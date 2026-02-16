@@ -15,6 +15,6 @@ if exist "%SCRIPT_DIR%configuration.conf" (
 )
 
 REM Run Python script
-python "%SCRIPT_DIR%main.py" %*
+python "%SCRIPT_DIR%yande.py" %*
 
 endlocal

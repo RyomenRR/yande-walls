@@ -6,9 +6,11 @@ A small script to fetch anime wallpapers from booru-style sites, optionally comp
 - Fetch images from yande.re, konachan.com and gelbooru.
 - Single-instance runs with preemption: starting a new run will terminate an existing run and cleanup partial downloads.
 - Downloads are written to temporary `.part` files and renamed atomically on success.
-- Collage mode: combine multiple portrait images into a single wallpaper.
+- **Three collage modes**:
+  - **Mode 0**: Landscape-only stock mode (maintains landscape cache, reuses images across runs)
+  - **Mode 1**: Stock-based collages (maintains portrait cache, reuses images across runs)
+- **Mode 2**: Alternating collage/landscape mode (keeps portrait + landscape caches and shows one type per run)
 - Configurable ratings: enable/disable `safe`, `questionable`, and `explicit` via config or environment.
-- When a collage is successfully set the script deletes the source stock images used for that collage (the generated collage image is kept).
 
 ## Requirements
 - Python 3.8+
@@ -19,7 +21,8 @@ pip install Pillow
 ```
 
 ## Files
-- `main.py` — main script.
+- `yande.py` — wallpaper setter entrypoint (runs the slideshow / manual change without downloading).
+- `downloader.py` — background downloader helper that keeps the portrait/landscape stock filled.
 - `configuration.conf` — optional configuration file (shell-style KEY=VALUE pairs).
 
 ## Configuration
@@ -39,27 +42,52 @@ explicit=1
 export YANDERE_RATINGS="questionable,explicit"
 ```
 
-Behavior: if the configuration results in exactly one selected rating the script will prefer a single-image wallpaper; if two or more ratings are selected it will enable collage behavior (combine multiple portrait images). If no ratings are configured the script falls back to the existing `COLLAGE_MODE` value.
+Behavior: the `COLLAGE_MODE` setting controls collage behavior:
+- **0**: Landscape-only stock mode (maintains landscape cache)
+- **1**: Stock-based collages from cached portrait images (keeps cache between runs while automatically picking enough portraits to fill `TARGET_WIDTH` using `MIN_TILE_WIDTH` as the minimum tile width)
+- **2**: Alternating collage/landscape selection (reuses portrait and landscape caches sized via `MODE2_PORTRAIT_TARGET` / `MODE2_LANDSCAPE_TARGET`)
 
-Other useful environment variables / keys (also available in the config):
-- `COLLAGE_MODE` — enable collage mode (1/0) if no ratings override.
-- `STOCK_TARGET` — how many portrait images to keep in the stock cache.
+The rating selection (`safe`, `questionable`, `explicit`) only determines which images are downloaded, not the collage mode.
+
+- Other useful environment variables / keys (also available in the config):
+- `COLLAGE_MODE` — collage behavior: 0=off, 1=stock-based, 2=alternating
+- `STOCK_TARGET` — how many portrait images to keep in stock (mode 1 only; Mode 2 uses this value as its portrait cache target)
+- `MODE2_PORTRAIT_TARGET`, `MODE2_LANDSCAPE_TARGET` — optional overrides for Mode 2 cache sizes (default portraits = `STOCK_TARGET`, landscapes ≈ `STOCK_TARGET / 3`, at least 1)
+- `MIN_TILE_WIDTH` — minimum width per collage tile; the script determines how many tiles fit in `TARGET_WIDTH` (always at least two) and uses that many portraits per collage.
+- `NEXT_WALLPAPER_COUNTDOWN_PATH` — optional file path (e.g. `~/.cache/yandere-wallpaper/next-wallpaper-countdown`). When `SLIDESHOW_MINUTES > 0`, the script writes an `MM:SS` countdown between each slide so you can display it in a status bar/polybar block.
 - `DOWNLOAD_THREADS`, `RUN_TIMEOUT`, etc. — see `configuration.conf` for defaults.
 
 ## How it handles files
-- Downloads are saved first as `.part` files. If a run is interrupted these `.part` files are removed when the next run starts (or when a running process is preempted).
-- Previously set wallpapers are preserved in the cache; the script no longer deletes the previous wallpaper file automatically.
-- When a collage is successfully created and set, the three source stock images used to build that collage are deleted from the stock folder (so stock is replenished afterwards).
+
+**Mode 0 (landscape-only stock):**
+- Maintains a stock of landscape images in `~/.cache/yandere-wallpaper/stock-landscape/`
+- Downloads new landscapes when stock falls below minimum
+- Sets a single landscape image from stock
+- Deletes the landscape image after setting (stock replenishes automatically)
+
+**Mode 1 (stock-based collage):**
+- Maintains a stock of portrait images in `~/.cache/yandere-wallpaper/stock/`
+- Downloads new portraits when stock falls below `STOCK_TARGET`
+- Creates collages from enough random stock portraits to fill `TARGET_WIDTH` while respecting `MIN_TILE_WIDTH`
+- Deletes the portraits used in each collage (stock replenishes automatically)
+- Stores every successful collage (and any fallback landscape downloads) under `~/.cache/yandere-wallpaper/used-walls/` with sequential filenames (`wallpaper-233.jpg`, `wallpaper-234.jpg`, …) so the most recent wallpapers are easy to locate
+
+- **Mode 2 (alternating collage/landscape):**
+- Keeps portrait stock in `~/.cache/yandere-wallpaper/stock/` (target derived from `STOCK_TARGET`, unless `MODE2_PORTRAIT_TARGET` overrides it) and landscape stock in `~/.cache/yandere-wallpaper/stock-landscape/` (target defaults to roughly one third of the portrait cache, min 1, unless `MODE2_LANDSCAPE_TARGET` overrides it)
+- Alternates between building a collage from 3 portraits and showing a single landscape, deleting the source images after use
+- Strict alternation gives you one collage run followed by one landscape run, consuming both caches in lock step
+- The script refills whichever cache is low before each type of run so the proportions stay near 30 portraits / 10 landscapes by default
+- Logs every Mode 2 run into `~/.local/state/yandere-wallpaper/mode2.log`, recording the action (`collage` or `landscape`) plus running totals so the next run knows which type comes next and you can see how many of each have been shown.
 
 ## Running
 
 ### Linux/macOS
 
-Make the script executable and run it directly:
+Make the wallpaper setter executable and run it directly:
 
 ```bash
-chmod +x main.py
-./main.py
+chmod +x yande.py
+./yande.py
 ```
 
 Or run via the provided shell wrapper:
@@ -68,24 +96,12 @@ Or run via the provided shell wrapper:
 bash yandere.sh
 ```
 
-### Windows
+### Background downloader helper
 
-Run via the provided batch or PowerShell wrapper:
+The downloader helper watches the portrait/landscape caches and refills them automatically. Run it in the background (or via a systemd/user service):
 
-```cmd
-yandere.bat
-```
-
-Or with PowerShell (requires execution policy adjustment):
-
-```powershell
-.\yandere.ps1
-```
-
-Or run Python directly:
-
-```cmd
-python main.py
+```bash
+python3 downloader.py &
 ```
 
 ### Testing & Configuration
@@ -94,14 +110,8 @@ To test ratings behavior quickly on any platform, edit `configuration.conf` and 
 
 ```bash
 # Linux/macOS
-YANDERE_RATINGS="safe" ./main.py   # single-image (safe only)
-YANDERE_RATINGS="questionable,explicit" ./main.py  # collage
-```
-
-```cmd
-REM Windows
-set YANDERE_RATINGS=safe
-python main.py
+YANDERE_RATINGS="safe" ./yande.py   # single-image (safe only)
+YANDERE_RATINGS="questionable,explicit" ./yande.py  # collage
 ```
 
 ## Troubleshooting
@@ -110,17 +120,11 @@ python main.py
 - If wallpapers are not applying, make sure a supported setter is available (`gsettings`, `feh`, `swaymsg`, `xfconf-query`, or `nitrogen`).
 - If collage mode fails, install Pillow.
 
-### Windows
-- Wallpaper setting requires Windows API access via Python's `ctypes` module (standard library, no install needed).
-- If wallpaper doesn't apply, try running with administrator privileges.
-- The script attempts multiple methods (Registry, API, PowerShell) to set the wallpaper. Check the logs if none succeed.
-- Ensure Python 3.8+ is installed and available in PATH.
-- If collage mode fails, install Pillow: `pip install Pillow`
-
 ### Cross-platform
 - Check that image files are valid (readable, correct format).
 - Ensure download folder has sufficient disk space.
 - For display server issues on Linux, verify your desktop environment supports one of the available setters.
+- **Mode 2 behavior**: Mode 2 alternates between collages and landscapes, keeping portrait/landscape caches and deleting the source images after each run. Use Mode 0 or Mode 1 if you want to hold onto exported wallpapers.
 
 ## Contributing
 Patches welcome. Keep changes focused and run the script locally to validate behavior.
@@ -134,19 +138,13 @@ Personal / repository default — add a license file if you want to publish.
 	- current working directory
 	- the script directory
 	- `~/.config/configuration.conf` (Linux/macOS only)
-	- `%APPDATA%/configuration.conf` (Windows only, via XDG_CONFIG_HOME equivalent)
 
 **Ratings Behavior (safe/questionable/explicit)**
 - Configure ratings via `configuration.conf` entries or `YANDERE_RATINGS` env var.
-- Example config lines:
-
-```properties
-safe=0
-questionable=1
-explicit=1
-```
-
-- If exactly one rating is selected the script prefers a single-image wallpaper. If two or more ratings are selected the script enables collage mode. If no ratings are set the `COLLAGE_MODE` setting is used.
+- Rating selection determines which images are downloaded. For example:
+  - `safe=1, questionable=0, explicit=0` → only safe images
+  - `questionable=1, explicit=1` → questionable and explicit images (safe is excluded)
+- The `COLLAGE_MODE` setting independently controls whether collage is enabled (1) or single-image mode (0), regardless of rating selection.
 
 **Stock refresh when ratings change**
 - The script persists the last-used rating selection in the state directory. If you change ratings, the next run will clear the portrait `stock/` folder and download fresh images matching the new selection.
@@ -156,4 +154,3 @@ explicit=1
 
 **Debugging**
 - The script logs the active `SELECTED_RATINGS` and whether collage is enabled at startup. If you see explicit images despite disabling them, check which config file is being read and the startup log.
-

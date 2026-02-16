@@ -17,7 +17,7 @@ if (Test-Path $ConfigFile) {
 }
 
 # Run Python script
-$PythonScript = Join-Path $ScriptDir "main.py"
+$PythonScript = Join-Path $ScriptDir "yande.py"
 & python $PythonScript @Arguments
 
 exit $LASTEXITCODE

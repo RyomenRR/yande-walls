@@ -67,6 +67,19 @@ set_wallpaper() {
 
 main() {
   local image
+  # If a yandere wallpaper slideshow/process is running, stop it so the default wallpaper takes effect
+  if command -v pkill >/dev/null 2>&1; then
+    pkill -f "yande.py" || true
+    pkill -f "yandere.sh" || true
+    pkill -f "yande.sh" || true
+  fi
+  # Remove any pid/lock file left by yandere-wallpaper so it doesn't immediately restart
+  if [ -n "${XDG_STATE_HOME:-}" ]; then
+    rm -f "${XDG_STATE_HOME}/yandere-wallpaper/run.lock" 2>/dev/null || true
+  else
+    rm -f "$HOME/.local/state/yandere-wallpaper/run.lock" 2>/dev/null || true
+  fi
+
   if ! image="$(pick_default)"; then
     log "Could not find an Ubuntu default wallpaper in /usr/share/backgrounds"
     exit 1
