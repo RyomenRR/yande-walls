@@ -1552,7 +1552,7 @@ def refill_stock(deadline: float, quick: bool = False):
         download_many(picked, deadline, STOCK_DIR)
 
 
-def run_wallpaper() -> int:
+def run_wallpaper(acquire_lock: bool = True) -> int:
     ensure_helper_process()
     start = time.monotonic()
     deadline = start + RUN_TIMEOUT
@@ -1562,21 +1562,24 @@ def run_wallpaper() -> int:
         timer_thread = Thread(target=countdown_worker, args=(deadline, stop_event), daemon=True)
         timer_thread.start()
 
-    lock_cm = None
-    try:
-        lock_cm = single_instance_lock()
-        lock_cm.__enter__()
-    except Exception as e:
-        log(str(e))
-        code = 0
-    else:
+    code = 0
+    if acquire_lock:
+        lock_cm = None
         try:
-            code = _main_with_lock(deadline)
-        finally:
+            lock_cm = single_instance_lock()
+            lock_cm.__enter__()
+        except Exception as e:
+            log(str(e))
+        else:
             try:
-                lock_cm.__exit__(None, None, None)
-            except Exception:
-                pass
+                code = _main_with_lock(deadline)
+            finally:
+                try:
+                    lock_cm.__exit__(None, None, None)
+                except Exception:
+                    pass
+    else:
+        code = _main_with_lock(deadline)
 
     stop_event.set()
     if timer_thread is not None:
